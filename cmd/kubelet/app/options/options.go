@@ -198,6 +198,8 @@ func NewKubeletFlags() *KubeletFlags {
 		remoteRuntimeEndpoint = "unix:///var/run/dockershim.sock"
 	} else if runtime.GOOS == "windows" {
 		remoteRuntimeEndpoint = "npipe:////./pipe/dockershim"
+	} else if runtime.GOOS == "darwin" {
+		remoteRuntimeEndpoint = "unix:///tmp/var/run/dockershim.sock"
 	}
 
 	return &KubeletFlags{

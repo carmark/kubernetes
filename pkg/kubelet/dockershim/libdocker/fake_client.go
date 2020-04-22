@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"k8s.io/klog"
 	"math/rand"
 	"os"
 	"reflect"
@@ -706,11 +707,33 @@ func (f *FakeDockerClient) isAuthorizedForImage(image string, auth dockertypes.A
 	}
 }
 
+func (f *FakeDockerClient) mockPullImage(image string) {
+	var mean, dev float64
+	var err error
+	if mean, err = strconv.ParseFloat(os.Getenv("ND_MEAN"), 64); err != nil {
+		klog.Errorf("invalid env ND_MEAN value: %s, set default value", os.Getenv("ND_MEAN"))
+		mean = 10
+	}
+	if dev, err = strconv.ParseFloat(os.Getenv("ND_DEV"), 64); err != nil {
+		klog.Errorf("invalid env ND_DEV value: %s, set default value", os.Getenv("ND_DEV"))
+		dev = 1.5
+	}
+	sleep_time := int(rand.NormFloat64() * dev + mean)
+	if 0 > sleep_time {
+		sleep_time = 1
+	}
+	klog.Infof("mock pulling image(%s): %d seconds will be cost , randomized by normal distribution(mean: %f, deviation: %f)",
+		image, sleep_time, mean, dev)
+	time.Sleep(time.Duration(sleep_time) * time.Second)
+	klog.Infof("pull image done")
+}
+
 // PullImage is a test-spy implementation of Interface.PullImage.
 // It adds an entry "pull" to the internal method call record.
 func (f *FakeDockerClient) PullImage(image string, auth dockertypes.AuthConfig, opts dockertypes.ImagePullOptions) error {
 	f.Lock()
 	defer f.Unlock()
+	klog.Infof("PullImage in FakeDockerClient: %s", image)
 	f.appendCalled(CalledDetail{name: "pull"})
 	err := f.popError("pull")
 	if err == nil {
@@ -722,6 +745,9 @@ func (f *FakeDockerClient) PullImage(image string, auth dockertypes.AuthConfig, 
 		inspect := createImageInspectFromRef(image)
 		f.ImageInspects[image] = inspect
 		f.appendPulled(fmt.Sprintf("%s using %s", image, string(authJson)))
+
+		f.mockPullImage(image)
+
 		f.Images = append(f.Images, *createImageFromImageInspect(*inspect))
 		f.ImagesPulled = append(f.ImagesPulled, image)
 	}

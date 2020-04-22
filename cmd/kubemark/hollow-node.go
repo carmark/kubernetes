@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
+	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
@@ -65,6 +66,8 @@ type hollowNodeConfig struct {
 	UseRealProxier       bool
 	ProxierSyncPeriod    time.Duration
 	ProxierMinSyncPeriod time.Duration
+	NumCores             int
+	MemoryCaps           uint64
 }
 
 const (
@@ -87,6 +90,8 @@ func (c *hollowNodeConfig) addFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&c.UseRealProxier, "use-real-proxier", true, "Set to true if you want to use real proxier inside hollow-proxy.")
 	fs.DurationVar(&c.ProxierSyncPeriod, "proxier-sync-period", 30*time.Second, "Period that proxy rules are refreshed in hollow-proxy.")
 	fs.DurationVar(&c.ProxierMinSyncPeriod, "proxier-min-sync-period", 0, "Minimum period that proxy rules are refreshed in hollow-proxy.")
+	fs.IntVar(&c.NumCores, "num-cores", 0, "CPU core number on this mock node.")
+	fs.Uint64Var(&c.MemoryCaps, "mem-caps", 0, "Memory caps on this mock node.")
 }
 
 func (c *hollowNodeConfig) createClientConfigFromFile() (*restclient.Config, error) {
@@ -171,30 +176,47 @@ func run(config *hollowNodeConfig) {
 				heartbeatClientConfig.Timeout = leaseTimeout
 			}
 		}
-		heartbeatClientConfig.QPS = float32(-1)
+		heartbeatClientConfig.QPS = float32(10)
 		heartbeatClient, err := clientset.NewForConfig(&heartbeatClientConfig)
 		if err != nil {
 			klog.Fatalf("Failed to create a ClientSet: %v. Exiting.", err)
 		}
+		// make a separate client for events
+		eventClientConfig := *clientConfig
+		eventClientConfig.QPS = float32(10)
+		//eventClientConfig.Burst = int(s.EventBurst)
+		eventClient, err := v1core.NewForConfig(&eventClientConfig)
+		if err != nil {
+			klog.Fatalf("failed to initialize kubelet event client: %v", err)
+		}
 
 		cadvisorInterface := &cadvisortest.Fake{
-			NodeName: config.NodeName,
+			NodeName:       config.NodeName,
+			NumCores:       config.NumCores,
+			MemoryCapacity: config.MemoryCaps,
 		}
-		containerManager := cm.NewStubContainerManager()
+		containerManager := cm.NewStubContainerManager(true)
 
 		fakeDockerClientConfig := &dockershim.ClientConfig{
 			DockerEndpoint:    libdocker.FakeDockerEndpoint,
 			EnableSleep:       true,
 			WithTraceDisabled: true,
 		}
+		eventBroadcaster := record.NewBroadcaster()
+		recorder := eventBroadcaster.NewRecorder(legacyscheme.Scheme, v1.EventSource{Component: "kubelet", Host: config.NodeName})
+		eventBroadcaster.StartLogging(klog.V(3).Infof)
+		eventBroadcaster.StartRecordingToSink(&v1core.EventSinkImpl{Interface: eventClient.Events("")})
 
 		hollowKubelet := kubemark.NewHollowKubelet(
+		    config.NodeName,
 			f, c,
 			client,
 			heartbeatClient,
+			eventClient,
 			cadvisorInterface,
 			fakeDockerClientConfig,
 			containerManager,
+			recorder,
 		)
 		hollowKubelet.Run()
 	}

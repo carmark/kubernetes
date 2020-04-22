@@ -25,7 +25,9 @@ import (
 
 // Fake cadvisor.Interface implementation.
 type Fake struct {
-	NodeName string
+	NodeName       string
+	NumCores       int
+	MemoryCapacity uint64
 }
 
 const (
@@ -70,11 +72,18 @@ func (c *Fake) DockerContainer(name string, req *cadvisorapi.ContainerInfoReques
 func (c *Fake) MachineInfo() (*cadvisorapi.MachineInfo, error) {
 	// Simulate a machine with 1 core and 3.75GB of memory.
 	// We set it to non-zero values to make non-zero-capacity machines in Kubemark.
-	return &cadvisorapi.MachineInfo{
-		NumCores:       fakeNumCores,
+	mi := &cadvisorapi.MachineInfo{
+		NumCores:       c.NumCores,
 		InstanceID:     cadvisorapi.InstanceID(c.NodeName),
-		MemoryCapacity: fakeMemoryCapacity,
-	}, nil
+		MemoryCapacity: c.MemoryCapacity,
+	}
+	if mi.NumCores == 0 {
+		mi.NumCores = fakeNumCores
+	}
+	if mi.MemoryCapacity == 0 {
+		mi.MemoryCapacity = fakeMemoryCapacity
+	}
+	return mi, nil
 }
 
 // VersionInfo is a fake implementation of Interface.VersionInfo.

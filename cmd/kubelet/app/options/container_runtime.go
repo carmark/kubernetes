@@ -48,7 +48,7 @@ func NewContainerRuntimeOptions() *config.ContainerRuntimeOptions {
 		ContainerRuntime:           kubetypes.DockerContainerRuntime,
 		RedirectContainerStreaming: false,
 		DockerEndpoint:             dockerEndpoint,
-		DockershimRootDirectory:    "/var/lib/dockershim",
+		DockershimRootDirectory:    "/tmp/var/lib/dockershim",
 		PodSandboxImage:            defaultPodSandboxImage,
 		ImagePullProgressDeadline:  metav1.Duration{Duration: 1 * time.Minute},
 		ExperimentalDockershim:     false,

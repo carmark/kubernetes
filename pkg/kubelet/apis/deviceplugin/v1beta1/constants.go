@@ -16,6 +16,8 @@ limitations under the License.
 
 package v1beta1
 
+import "os"
+
 const (
 	// Healthy means that the device is healthy
 	Healthy = "Healthy"
@@ -24,14 +26,24 @@ const (
 
 	// Current version of the API supported by kubelet
 	Version = "v1beta1"
-	// DevicePluginPath is the folder the Device Plugin is expecting sockets to be on
-	// Only privileged pods have access to this path
-	// Note: Placeholder until we find a "standard path"
-	DevicePluginPath = "/var/lib/kubelet/device-plugins/"
-	// KubeletSocket is the path of the Kubelet registry socket
-	KubeletSocket = DevicePluginPath + "kubelet.sock"
+
 	// Timeout duration in secs for PreStartContainer RPC
 	KubeletPreStartContainerRPCTimeoutInSecs = 30
 )
 
 var SupportedVersions = [...]string{"v1beta1"}
+var (
+	// DevicePluginPath is the folder the Device Plugin is expecting sockets to be on
+	// Only privileged pods have access to this path
+	// Note: Placeholder until we find a "standard path"
+	DevicePluginPath = "/tmp/var/lib/kubelet/device-plugins/"
+	// KubeletSocket is the path of the Kubelet registry socket
+	KubeletSocket = DevicePluginPath + "kubelet.sock"
+)
+
+func init() {
+	if tmp := os.Getenv("DEVICE_PLUGIN_PATH"); tmp != "" {
+		DevicePluginPath = tmp
+		KubeletSocket = tmp+"kubelet.sock"
+	}
+}

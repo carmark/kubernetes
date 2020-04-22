@@ -24,6 +24,8 @@ import (
 	internalapi "k8s.io/cri-api/pkg/apis"
 	podresourcesapi "k8s.io/kubernetes/pkg/kubelet/apis/podresources/v1alpha1"
 	"k8s.io/kubernetes/pkg/kubelet/cm/cpumanager"
+	cputopology "k8s.io/kubernetes/pkg/kubelet/cm/cpumanager/topology"
+	"k8s.io/kubernetes/pkg/kubelet/cm/devicemanager"
 	"k8s.io/kubernetes/pkg/kubelet/cm/topologymanager"
 	"k8s.io/kubernetes/pkg/kubelet/config"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -35,12 +37,20 @@ import (
 
 type containerManagerStub struct {
 	shouldResetExtendedResourceCapacity bool
+	// Interface for exporting and allocating devices reported by device plugins.
+	deviceManager devicemanager.Manager
+	// Interface for Topology resource co-ordination
+	topologyManager topologymanager.Manager
 }
 
 var _ ContainerManager = &containerManagerStub{}
 
-func (cm *containerManagerStub) Start(_ *v1.Node, _ ActivePodsFunc, _ config.SourcesReady, _ status.PodStatusProvider, _ internalapi.RuntimeService) error {
+func (cm *containerManagerStub) Start(node *v1.Node, activePods ActivePodsFunc, sourcesReady config.SourcesReady, podStatusProvider status.PodStatusProvider, _ internalapi.RuntimeService) error {
 	klog.V(2).Infof("Starting stub container manager")
+	// Starts device manager.
+	if err := cm.deviceManager.Start(devicemanager.ActivePodsFunc(activePods), sourcesReady); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -86,7 +96,7 @@ func (cm *containerManagerStub) GetPluginRegistrationHandler() cache.PluginHandl
 }
 
 func (cm *containerManagerStub) GetDevicePluginResourceCapacity() (v1.ResourceList, v1.ResourceList, []string) {
-	return nil, nil, []string{}
+	return cm.deviceManager.GetCapacity()
 }
 
 func (cm *containerManagerStub) NewPodContainerManager() PodContainerManager {
@@ -94,11 +104,24 @@ func (cm *containerManagerStub) NewPodContainerManager() PodContainerManager {
 }
 
 func (cm *containerManagerStub) GetResources(pod *v1.Pod, container *v1.Container) (*kubecontainer.RunContainerOptions, error) {
-	return &kubecontainer.RunContainerOptions{}, nil
+	opts := &kubecontainer.RunContainerOptions{}
+	// Allocate should already be called during predicateAdmitHandler.Admit(),
+	// just try to fetch device runtime information from cached state here
+	devOpts, err := cm.deviceManager.GetDeviceRunContainerOptions(pod, container)
+	if err != nil {
+		return nil, err
+	} else if devOpts == nil {
+		return opts, nil
+	}
+	opts.Devices = append(opts.Devices, devOpts.Devices...)
+	opts.Mounts = append(opts.Mounts, devOpts.Mounts...)
+	opts.Envs = append(opts.Envs, devOpts.Envs...)
+	opts.Annotations = append(opts.Annotations, devOpts.Annotations...)
+	return opts, nil
 }
 
-func (cm *containerManagerStub) UpdatePluginResources(*schedulernodeinfo.NodeInfo, *lifecycle.PodAdmitAttributes) error {
-	return nil
+func (cm *containerManagerStub) UpdatePluginResources(node *schedulernodeinfo.NodeInfo, attrs *lifecycle.PodAdmitAttributes) error {
+	return cm.deviceManager.Allocate(node, attrs)
 }
 
 func (cm *containerManagerStub) InternalContainerLifecycle() InternalContainerLifecycle {
@@ -109,20 +132,39 @@ func (cm *containerManagerStub) GetPodCgroupRoot() string {
 	return ""
 }
 
-func (cm *containerManagerStub) GetDevices(_, _ string) []*podresourcesapi.ContainerDevices {
-	return nil
+func (cm *containerManagerStub) GetDevices(podUID, containerName string) []*podresourcesapi.ContainerDevices {
+	return cm.deviceManager.GetDevices(podUID, containerName)
 }
 
 func (cm *containerManagerStub) ShouldResetExtendedResourceCapacity() bool {
-	return cm.shouldResetExtendedResourceCapacity
+	return cm.deviceManager.ShouldResetExtendedResourceCapacity()
 }
 
 func (cm *containerManagerStub) GetTopologyPodAdmitHandler() topologymanager.Manager {
-	return nil
+	return cm.topologyManager
 }
 
-func NewStubContainerManager() ContainerManager {
-	return &containerManagerStub{shouldResetExtendedResourceCapacity: false}
+func NewStubContainerManager(devicePluginEnabled bool) ContainerManager {
+	var cm = &containerManagerStub{shouldResetExtendedResourceCapacity: false}
+	var err error
+	cm.topologyManager = topologymanager.NewFakeManager()
+	// Correct NUMA information is currently missing from cadvisor's
+	// MachineInfo struct, so we use the CPUManager's internal logic for
+	// gathering NUMANodeInfo to pass to components that care about it.
+	numaNodeInfo, err := cputopology.GetNUMANodeInfo()
+	if err != nil {
+		klog.Error(err)
+		return nil
+	}
+
+	klog.Infof("Creating device plugin manager: %t", devicePluginEnabled)
+	if devicePluginEnabled {
+		cm.deviceManager, err = devicemanager.NewManagerImpl(numaNodeInfo, cm.topologyManager)
+		cm.topologyManager.AddHintProvider(cm.deviceManager)
+	} else {
+		cm.deviceManager, err = devicemanager.NewManagerStub()
+	}
+	return cm
 }
 
 func NewStubContainerManagerWithExtendedResource(shouldResetExtendedResourceCapacity bool) ContainerManager {

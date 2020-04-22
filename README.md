@@ -1,86 +1,62 @@
-# Kubernetes
+# Kubernetes simulation
 
-[![GoDoc Widget]][GoDoc] [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/569/badge)](https://bestpractices.coreinfrastructure.org/projects/569)
+We use this code to simulate the kubernetes cluster with GPU and/or RDMA.
 
-<img src="https://github.com/kubernetes/kubernetes/raw/master/logo/logo.png" width="100">
+## How-to
 
-----
-
-Kubernetes is an open source system for managing [containerized applications]
-across multiple hosts. It provides basic mechanisms for deployment, maintenance,
-and scaling of applications.
-
-Kubernetes builds upon a decade and a half of experience at Google running
-production workloads at scale using a system called [Borg],
-combined with best-of-breed ideas and practices from the community.
-
-Kubernetes is hosted by the Cloud Native Computing Foundation ([CNCF]).
-If your company wants to help shape the evolution of
-technologies that are container-packaged, dynamically scheduled,
-and microservices-oriented, consider joining the CNCF.
-For details about who's involved and how Kubernetes plays a role,
-read the CNCF [announcement].
-
-----
-
-## To start using Kubernetes
-
-See our documentation on [kubernetes.io].
-
-Try our [interactive tutorial].
-
-Take a free course on [Scalable Microservices with Kubernetes].
-
-## To start developing Kubernetes
-
-The [community repository] hosts all information about
-building Kubernetes from source, how to contribute code
-and documentation, who to contact about what, etc.
-
-If you want to build Kubernetes right away there are two options:
-
-##### You have a working [Go environment].
+#### Build kubemark
 
 ```
-mkdir -p $GOPATH/src/k8s.io
-cd $GOPATH/src/k8s.io
-git clone https://github.com/kubernetes/kubernetes
-cd kubernetes
-make
+# Clone source code of this repo
+$ cd cmd/kubemark/
+$ go build .
 ```
 
-##### You have a working [Docker environment].
+#### Run kubemark
 
 ```
-git clone https://github.com/kubernetes/kubernetes
-cd kubernetes
-make quick-release
+$ export DEVICE_PLUGIN_PATH=/tmp/var/lib/kubelet/device-plugins/
+$ export ND_MEAN=20; export ND_DEV=2
+$ ./kubemark --kubelet-port 10350 --kubeconfig /etc/kubernetes/admin.conf --morph kubelet --name fake-node --kubelet-read-only-port 10355
 ```
 
-For the full story, head over to the [developer's documentation].
+#### Run Mocked Device Plugin
 
-## Support
+```
+# clone https://git.code.oa.com/kubeflow/k8s-device-plugin
+$ cd k8s-device-plugin & go build .
+$ export DEVICE_PLUGIN_PATH=/tmp/var/lib/kubelet/device-plugins/
+$ ./k8s-device-plugin
+```
 
-If you need support, start with the [troubleshooting guide],
-and work your way through the process that we've outlined.
+#### Check
 
-That said, if you have questions, reach out to us
-[one way or another][communication].
+```
+$ kubectl get nodes
+NAME        STATUS     ROLES    AGE     VERSION
+fake-node   NotReady   <none>   5h6m    v0.0.0-master+$Format:%h$
+master      Ready      <none>   6h14m   v1.17.0
 
-[announcement]: https://cncf.io/news/announcement/2015/07/new-cloud-native-computing-foundation-drive-alignment-among-container
-[Borg]: https://research.google.com/pubs/pub43438.html
-[CNCF]: https://www.cncf.io/about
-[communication]: https://git.k8s.io/community/communication
-[community repository]: https://git.k8s.io/community
-[containerized applications]: https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/
-[developer's documentation]: https://git.k8s.io/community/contributors/devel#readme
-[Docker environment]: https://docs.docker.com/engine
-[Go environment]: https://golang.org/doc/install
-[GoDoc]: https://godoc.org/k8s.io/kubernetes
-[GoDoc Widget]: https://godoc.org/k8s.io/kubernetes?status.svg
-[interactive tutorial]: https://kubernetes.io/docs/tutorials/kubernetes-basics
-[kubernetes.io]: https://kubernetes.io
-[Scalable Microservices with Kubernetes]: https://www.udacity.com/course/scalable-microservices-with-kubernetes--ud615
-[troubleshooting guide]: https://kubernetes.io/docs/tasks/debug-application-cluster/troubleshooting/
+$ kubectl describe nodes fake-node | grep gpu
+nvidia.com/gpu:     8
+```
 
-[![Analytics](https://kubernetes-site.appspot.com/UA-36037335-10/GitHub/README.md?pixel)]()
+## Run a Pod
+
+```
+# kubectl create -f nginx.yml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  containers:
+    - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+	nvidia.com/gpu: 10 # requesting 1 GPU
+  nodeSelector:
+    kubernetes.io/hostname: fake-node
+```
